@@ -7,13 +7,13 @@ ARG PHP_VERSION
 FROM composer/composer:2.11.2-bin@sha256:4eaf89f62eb9504807f2828f1829a71b7fcd202e89abe2f41c1fb2136068fbfb AS composer
 
 
-FROM php:${PHP_VERSION:?}-apache-bookworm AS build
+FROM php:${PHP_VERSION:?}-apache-trixie AS build
 
 # From PHP 8.6 on, the official image no longer compiles mbstring in: it is built wherever PHP lacks it.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        libfreetype6-dev libgmp-dev libicu-dev libjpeg62-turbo-dev libonig-dev libpng-dev libpq-dev libwebp-dev \
+        libfreetype-dev libgmp-dev libicu-dev libjpeg62-turbo-dev libonig-dev libpng-dev libpq-dev libwebp-dev \
         libzip-dev zlib1g-dev; \
     rm -rf /var/lib/apt/lists/*; \
     docker-php-ext-configure gd --enable-gd --with-freetype --with-jpeg --with-webp; \
@@ -36,7 +36,7 @@ RUN set -eu; \
     cat /runtime-packages
 
 
-FROM php:${PHP_VERSION:?}-apache-bookworm AS prod
+FROM php:${PHP_VERSION:?}-apache-trixie AS prod
 
 # apt-get upgrade takes Debian's fixes before the official image is rebuilt. The compiler the official image keeps
 # for phpize ($PHPIZE_DEPS) goes; libc-dev in that list is virtual, so its package is named.
@@ -144,9 +144,9 @@ RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PHPIZE_DEPS \
         apt-utils gnupg lsb-release ca-certificates wget build-essential cron git curl zip unzip openssl dialog locales \
-        libonig-dev libcurl4 libcurl4-openssl-dev supervisor libsqlite3-dev libsqlite3-0 zlib1g-dev libzip-dev libpq-dev \
-        libicu-dev libfreetype6-dev libjpeg62-turbo-dev libpng-dev libxml2-dev libssh2-1 libssh2-1-dev libgmp-dev \
-        rubygems ruby-dev sqlite3; \
+        libonig-dev libcurl4t64 libcurl4-openssl-dev supervisor libsqlite3-dev libsqlite3-0 zlib1g-dev libzip-dev libpq-dev \
+        libicu-dev libfreetype-dev libjpeg62-turbo-dev libpng-dev libxml2-dev libssh2-1t64 libssh2-1-dev libgmp-dev \
+        ruby-dev bundler sqlite3; \
     rm -rf /var/lib/apt/lists/*
 
 # The PHP source archive and headers, for docker-php-ext-install and phpize to build another extension.
@@ -155,10 +155,10 @@ COPY --from=build /usr/local/include/php/ /usr/local/include/php/
 
 COPY --from=composer /composer /usr/local/bin/composer
 
-# MailCatcher and its dependencies, each at the version Gemfile.lock fixes (0.11 needs Ruby 3.3; Bookworm ships 3.1).
+# MailCatcher and its dependencies, each at the version Gemfile.lock fixes (Debian 13 ships Ruby 3.3).
 RUN --mount=type=bind,source=Gemfile,target=/tmp/mailcatcher/Gemfile \
     --mount=type=bind,source=Gemfile.lock,target=/tmp/mailcatcher/Gemfile.lock \
-    BUNDLE_GEMFILE=/tmp/mailcatcher/Gemfile BUNDLE_FROZEN=true bundle3.1 install
+    BUNDLE_GEMFILE=/tmp/mailcatcher/Gemfile BUNDLE_FROZEN=true bundle3.3 install
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
