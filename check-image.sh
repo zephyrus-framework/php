@@ -32,7 +32,21 @@ pass "none of $tools, and no -dev package"
 
 setid=$(find / -xdev -perm /6000 -type f 2>&1) || fail "find: $setid"
 [ -z "$setid" ] || fail "setuid or setgid files: $setid"
-pass "no setuid or setgid file"
+capable=$(python3 -I - <<'PY' 2>&1
+import os
+for top, dirs, files in os.walk("/"):
+    dirs[:] = [d for d in dirs if not os.path.ismount(os.path.join(top, d))]
+    for name in dirs + files:
+        path = os.path.join(top, name)
+        try:
+            os.getxattr(path, "security.capability", follow_symlinks=False)
+            print(path)
+        except OSError:
+            pass
+PY
+) || fail "python3: $capable"
+[ -z "$capable" ] || fail "files with a file capability: $capable"
+pass "no setuid or setgid file, no file capability"
 
 keys=$(grep -rlI -D skip -e 'PRIVATE KEY-----' /etc /root /usr/local /var 2>&1)
 case $? in
@@ -84,9 +98,50 @@ active=$(grep -hiE '^[[:space:]]*(Server(Tokens|Signature)|TraceEnable)[[:space:
 settings=$(apache2ctl -S 2>&1)
 root=$(printf '%s\n' "$settings" | sed -n 's/^Main DocumentRoot: //p')
 [ "$root" = '"/var/www/html/public"' ] || fail "the main server's DocumentRoot is $root, not \"/var/www/html/public\""
-owner=$(stat -c '%U:%G %a' /var/www/html)
-[ "$owner" = 'root:root 755' ] || fail "/var/www/html is $owner, not root:root 755"
-pass "Apache: only the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod, ServerSignature Off, TraceEnable Off, main DocumentRoot public/, /var/www/html root:root 755"
+for dir in /var/www/html /var/www/html/public; do
+    owner=$(stat -c '%U:%G %a' "$dir")
+    [ "$owner" = 'root:root 755' ] || fail "$dir is $owner, not root:root 755"
+done
+included=$(apache2ctl -t -D DUMP_INCLUDES 2>&1 | sed -n 's/^ *([0-9*]*) //p')
+routing=$(python3 -I - "$loaded" $included <<'PY' 2>&1
+import re
+import sys
+
+loaded = set(sys.argv[1].split())
+directive = re.compile(r"(Alias|AliasMatch|ScriptAlias|ScriptAliasMatch|Listen)\s", re.I)
+opener = re.compile(r"<(IfModule|IfDefine|IfVersion|IfFile|IfSection)\s+(.*?)\s*>", re.I)
+closer = re.compile(r"</If(Module|Define|Version|File|Section)>", re.I)
+
+
+def holds(kind, argument):
+    wanted = not argument.startswith("!")
+    argument = argument.lstrip("!")
+    if kind.lower() == "ifmodule":
+        match = re.fullmatch(r"mod_(\w+)\.c", argument)
+        return ((match.group(1) + "_module" if match else argument) in loaded) == wanted
+    if kind.lower() == "ifdefine":
+        return not wanted
+    return True
+
+
+found = []
+for path in sys.argv[2:]:
+    open_blocks = []
+    for line in open(path, errors="replace"):
+        line = line.strip()
+        block = opener.fullmatch(line)
+        if block:
+            open_blocks.append(holds(*block.groups()))
+        elif closer.fullmatch(line):
+            open_blocks and open_blocks.pop()
+        elif all(open_blocks) and directive.match(line):
+            found.append(line)
+print("\n".join(sorted(found)))
+PY
+) || fail "python3: $routing"
+[ "$routing" = "$(printf 'Alias /icons/ "/usr/share/apache2/icons/"\nListen ${APACHE_PORT}')" ] \
+    || fail "the Alias and Listen directives are: $(printf '%s' "$routing" | tr '\n' ';')"
+pass "Apache: only the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod, ServerSignature Off, TraceEnable Off, main DocumentRoot public/, /var/www/html and public/ root:root 755, no Alias or Listen but /icons/ and \$APACHE_PORT"
 
 command -v supervisord >/dev/null || fail "supervisord is not installed"
 tables=$(ls -A /etc/supervisor/conf.d)
