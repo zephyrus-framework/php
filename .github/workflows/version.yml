@@ -118,10 +118,12 @@ jobs:
         env:
           PROD: ${{ steps.push.outputs.digest }}
           DEV: ${{ steps.dev.outputs.digest }}
+        shell: bash
         run: |
+          set -euo pipefail
           checked=$(docker image inspect -f '{{json .RootFS.Layers}}' zephyrus-php:check | jq -c .)
           pushed=$(docker buildx imagetools inspect --format '{{json .Image.RootFS.DiffIDs}}' "$IMAGE@$PROD" | jq -c .)
-          if [ "$pushed" != "$checked" ]; then
+          if [ -z "$checked" ] || [ -z "$pushed" ] || [ "$pushed" != "$checked" ]; then
             echo "The layers of the prod image pushed, $pushed, are not those checked, $checked." >&2
             exit 1
           fi
