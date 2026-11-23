@@ -1,6 +1,6 @@
 # Three targets: build compiles the shared extensions, prod is the image an application serves (no compiler, no
-# development tool), and dev, the default target, is prod plus the tools the development images and test suites use.
-# Every build argument is required: .github/workflows/build.yml holds the values of each PHP version.
+# development tool), and dev, the default target, is prod plus the development tools. Every build argument is
+# required: .github/workflows/build.yml holds the values of each PHP version.
 
 ARG PHP_VERSION
 
@@ -38,9 +38,8 @@ RUN set -eu; \
 
 FROM php:${PHP_VERSION:?}-apache-bookworm AS prod
 
-# Debian's packages are brought up to date first, so the weekly rebuild takes their security fixes even before the
-# official image is rebuilt. No package brings its recommendations along. The compiler the official image keeps for
-# phpize ($PHPIZE_DEPS) is removed. libc-dev in that list is virtual, so its package is named.
+# apt-get upgrade takes Debian's fixes before the official image is rebuilt. The compiler the official image keeps
+# for phpize ($PHPIZE_DEPS) goes; libc-dev in that list is virtual, so its package is named.
 COPY --from=build /runtime-packages /tmp/runtime-packages
 RUN set -eux; \
     apt-get update; \
@@ -83,9 +82,8 @@ RUN set -eu; \
     a2ensite default; \
     a2enconf server
 
-# AllowEncodedSlashes is not inherited from the server config into a <VirtualHost>, so it must sit inside every one,
-# or a path holding %2F gets Apache's own 404 before PHP runs. 000-default.conf gets it too, for an image that enables
-# it again. The build fails if any enabled <VirtualHost> is left without it.
+# AllowEncodedSlashes is not inherited into a <VirtualHost>: every enabled one carries it, and 000-default.conf too,
+# for an image that enables it again.
 RUN set -eu; \
     sed -i 's#^\([[:space:]]*<VirtualHost[^>]*>\)[[:space:]]*$#\1\n\tAllowEncodedSlashes NoDecode#' \
         /etc/apache2/sites-available/000-default.conf; \
@@ -97,9 +95,7 @@ RUN set -eu; \
         test "$vhosts" = "$patched" || { echo "$vhost: $vhosts <VirtualHost>, $patched AllowEncodedSlashes NoDecode" >&2; exit 1; }; \
     done
 
-# Debian's security.conf ships ServerTokens OS and ServerSignature On, which name Apache's release and distribution in
-# every Server header and error page. They are rewritten in that file, so each has a single value, and the build fails
-# unless the enabled configuration holds exactly ServerTokens Prod and ServerSignature Off.
+# ServerTokens Prod and ServerSignature Off, as the only values of the enabled configuration.
 RUN set -eu; \
     sed -i \
         -e 's#^[[:space:]]*ServerTokens[[:space:]].*$#ServerTokens Prod#I' \
@@ -109,10 +105,8 @@ RUN set -eu; \
         /etc/apache2/conf-enabled/*.conf /etc/apache2/sites-enabled/*.conf | sed 's#^[[:space:]]*##; s#[[:space:]]*$##' | sort -u)"; \
     test "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod')" || { echo "Server directives: $active" >&2; exit 1; }
 
-# No TLS in the image: it ends in front of the container, so there is no mod_ssl, no 443 vhost and no private key,
-# which anyone pulling this public image would hold. The files of mod_ssl, mod_status and mod_autoindex stay in
-# mods-available: `a2dismod ssl` in a downstream image returns 0 on a module already off, but 1 once its files are
-# gone. The build fails if any of this changes.
+# No TLS, so no private key a public image would give away. The files of ssl, status and autoindex stay in
+# mods-available: a2dismod returns 1 on a module whose files are gone.
 RUN set -eu; \
     test "$(ls -A /etc/apache2/sites-enabled)" = default.conf || { echo "sites-enabled: $(ls -A /etc/apache2/sites-enabled)" >&2; exit 1; }; \
     test -z "$(find /etc/ssl/private -type f)"; \
