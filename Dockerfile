@@ -4,6 +4,9 @@
 
 ARG PHP_VERSION
 
+FROM composer/composer:2.11.2-bin@sha256:4eaf89f62eb9504807f2828f1829a71b7fcd202e89abe2f41c1fb2136068fbfb AS composer
+
+
 FROM php:${PHP_VERSION:?}-apache-bookworm AS build
 
 # From PHP 8.6 on, the official image no longer compiles mbstring in: it is built wherever PHP lacks it.
@@ -156,9 +159,10 @@ RUN set -eux; \
 COPY --from=build /usr/src/ /usr/src/
 COPY --from=build /usr/local/include/php/ /usr/local/include/php/
 
-RUN curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+COPY --from=composer /composer /usr/local/bin/composer
 
-RUN gem install mailcatcher --no-document
+# 0.11 needs Ruby 3.3; Debian Bookworm ships 3.1.
+RUN gem install mailcatcher -v 0.10.0 --no-document
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
