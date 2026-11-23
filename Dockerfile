@@ -61,8 +61,9 @@ RUN set -eux; \
 
 COPY --from=build /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
 COPY --from=build /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+# Named base-*.ini, so an application's zz-*.ini comes after them and wins.
 COPY custom.ini /usr/local/etc/php/conf.d/base-custom.ini
-COPY php2shell.ini /usr/local/etc/php/conf.d/zz-php2shell.ini
+COPY php2shell.ini /usr/local/etc/php/conf.d/base-php2shell.ini
 
 # The build fails if an extension misses a library or PHP complains at startup.
 RUN set -eu; \
@@ -193,6 +194,7 @@ RUN set -eux; \
     docker-php-ext-enable ssh2 xdebug; \
     mkdir -p "$PHP_INI_DIR/disabled"; \
     mv "$PHP_INI_DIR/conf.d/docker-php-ext-xdebug.ini" "$PHP_INI_DIR/disabled/"
+COPY dev.ini /usr/local/etc/php/conf.d/base-dev.ini
 COPY xdebug.ini /usr/local/etc/php/conf.d/base-xdebug.ini
 
 # The packages above bring setuid files back (crontab): they go, as in prod. The build fails if a tool is missing.

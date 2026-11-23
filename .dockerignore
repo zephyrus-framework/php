@@ -1,5 +1,6 @@
 *
 !custom.ini
+!dev.ini
 !php2shell.ini
 !server.conf
 !supervisord.conf
