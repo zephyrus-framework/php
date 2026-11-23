@@ -155,8 +155,10 @@ COPY --from=build /usr/local/include/php/ /usr/local/include/php/
 
 COPY --from=composer /composer /usr/local/bin/composer
 
-# 0.11 needs Ruby 3.3; Debian Bookworm ships 3.1.
-RUN gem install mailcatcher -v 0.10.0 --no-document
+# MailCatcher and its dependencies, each at the version Gemfile.lock fixes (0.11 needs Ruby 3.3; Bookworm ships 3.1).
+RUN --mount=type=bind,source=Gemfile,target=/tmp/mailcatcher/Gemfile \
+    --mount=type=bind,source=Gemfile.lock,target=/tmp/mailcatcher/Gemfile.lock \
+    BUNDLE_GEMFILE=/tmp/mailcatcher/Gemfile BUNDLE_FROZEN=true bundle3.1 install
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
@@ -181,7 +183,8 @@ RUN set -eu; \
     test -s /usr/src/php.tar.xz || { echo "/usr/src/php.tar.xz is missing" >&2; exit 1; }; \
     composer --version; \
     git --version; \
-    mailcatcher --help > /dev/null
+    mailcatcher --help > /dev/null; \
+    php -r 'exit(filter_var(ini_get("zend.exception_ignore_args"), FILTER_VALIDATE_BOOLEAN) ? 1 : 0);' || { echo "dev.ini does not override custom.ini" >&2; exit 1; }
 
 EXPOSE 80 1080
 CMD ["/usr/bin/supervisord"]

@@ -1,4 +1,6 @@
 *
+!Gemfile
+!Gemfile.lock
 !build-extension.sh
 !custom.ini
 !dev.ini
