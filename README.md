@@ -39,7 +39,7 @@ Everything in `prod`, plus:
 * ssh2, loaded;
 * Xdebug, compiled but disabled: its ini file waits in `/usr/local/etc/php/disabled/`, and
   `php -d zend_extension=xdebug.so` loads it for one command;
-* MailCatcher and cron;
+* MailCatcher, with its dependencies at the versions of [`Gemfile.lock`](Gemfile.lock), and cron;
 * Supervisor runs Apache, MailCatcher and cron: `CMD ["/usr/bin/supervisord"]`, ports 80 and 1080.
 
 A `-dev` tag is never served: MailCatcher runs as root with no authentication. Publish its ports on the loopback
@@ -63,7 +63,9 @@ Apache, in both targets:
   `<VirtualHost>` claims: nothing above `public/` is served. `ServerName localhost`.
 * A `.htaccess` is read in `public/` alone (`AllowOverride None` on `/var/www/`, `docker-php.conf` included).
 * `Listen ${APACHE_PORT}` in `ports.conf` and `<VirtualHost *:${APACHE_PORT}>` in `default.conf`: an image changes
-  the port with `ENV APACHE_PORT=8080`, without editing either file.
+  the port with `ENV APACHE_PORT=8080`, without editing either file. An application's own vhost is written
+  `<VirtualHost *:${APACHE_PORT}>`: one left on `*:80` is ignored without a warning once the port changes, and the main
+  server answers in its place, without the vhost's access rules, headers and log.
 * `AllowEncodedSlashes NoDecode` sits in every enabled `<VirtualHost>`, so a `%2F` in a path reaches PHP instead of
   Apache's own 404. It is not inherited from the server configuration: a vhost a downstream image adds needs the line
   too.
@@ -88,11 +90,13 @@ RUN composer install --no-dev --no-interaction --no-progress --prefer-dist
 FROM ghcr.io/zephyrus-framework/php:8.4
 COPY . /var/www/html
 COPY --from=vendor /src/vendor /var/www/html/vendor
+RUN find /var/www/html -perm /022 -exec chmod go-w {} +
 USER www-data
 ```
 
 The code belongs to root and the application runs as `www-data`: `/var/www/html` stays root's (0755) through the
-`COPY`, so `www-data` can change nothing there, and the application opens only the directories it writes to.
+`COPY` and the `chmod` strips write access a lax build context (a working copy made under `umask 000`) would carry in,
+so `www-data` can change nothing there, and the application opens only the directories it writes to.
 `www-data` can listen on port 80 because Docker opens the low ports to every user of a container
 (`net.ipv4.ip_unprivileged_port_start=0`). A runtime that does not (one that runs the image as `www-data` outside
 Docker Engine) needs `ENV APACHE_PORT=8080` in the image, and its proxy pointed at port 8080. Leave `vendor/` out of
@@ -101,10 +105,10 @@ the build context with a `.dockerignore`.
 ## `check-image.sh`
 
 `./check-image.sh <image>` checks what the `prod` target carries, as root, and stops at the first failure: `Cmd` and
-exposed ports, no development tool or `-dev` package, no setuid or setgid file, no private key in `/etc`, `/root`,
-`/usr/local` or `/var`, every extension loaded without a warning (and neither Xdebug nor ssh2), the Apache modules
+exposed ports, no development tool or `-dev` package, no setuid or setgid file, no file capability, no private key in
+`/etc`, `/root`, `/usr/local` or `/var`, every extension loaded without a warning (and neither Xdebug nor ssh2), the Apache modules
 against an allowlist, `ServerTokens`, `ServerSignature` and `TraceEnable`, the main `DocumentRoot`, the owner of
-`/var/www/html`, Supervisor without a program, the locales. It then asks Apache itself, on port `$APACHE_PORT` and on
+`/var/www/html` and `public/`, any `Alias` or `Listen` beyond `/icons/` and `$APACHE_PORT`, Supervisor without a program, the locales. It then asks Apache itself, on port `$APACHE_PORT` and on
 a port no vhost claims, for the PHP version and directives it serves, its headers, which `.htaccess` it reads, a file
 outside `public/` and `TRACE`. It needs Docker and nothing else, and prints `check-image: PASS` at the end. It catches
 the regressions it looks for; it is no proof that an image is safe. The CI runs it on every version and architecture
@@ -169,7 +173,9 @@ What changes for an image built on top:
 * The base sets the PHP error directives each application used to set itself ([`custom.ini`](custom.ini)): its own
   `zz-*.ini` can drop them, and still overrides the base. `-dev` displays no error either (the old image had no
   `php.ini`, so `display_errors` was on), and keeps the arguments in exception traces.
-* A different port is `ENV APACHE_PORT=<port>`, not an edit of `ports.conf` and the vhost.
+* A different port is `ENV APACHE_PORT=<port>`, not an edit of `ports.conf` and the vhost, and an application's own
+  vhost is written `<VirtualHost *:${APACHE_PORT}>`: one left on `*:80` is ignored without a warning once the port
+  changes, and the main server answers in its place.
 * `autoindex` is off: a directory without an index answers 404 instead of listing its files.
 * The `en_CA.UTF-8` and `fr_CA.UTF-8` locales are really generated (the old images generated none).
 * GD reads and writes WebP and pcntl is loaded, in both targets: a derived image no longer rebuilds gd or adds pcntl.
