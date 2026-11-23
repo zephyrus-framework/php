@@ -164,7 +164,8 @@ RUN set -eux; \
         rubygems ruby-dev sqlite3; \
     rm -rf /var/lib/apt/lists/*
 
-# The headers the extensions of the build stage install, for an extension built against them.
+# The PHP source archive and headers, for docker-php-ext-install and phpize to build another extension.
+COPY --from=build /usr/src/ /usr/src/
 COPY --from=build /usr/local/include/php/ /usr/local/include/php/
 
 RUN curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
@@ -202,6 +203,7 @@ RUN set -eu; \
     find / -xdev -perm /6000 -type f -exec chmod ug-s {} +; \
     php -m | grep -qx ssh2 || { echo "ssh2 is not loaded" >&2; exit 1; }; \
     php -d zend_extension=xdebug.so -v | grep -q 'with Xdebug' || { echo "Xdebug does not load" >&2; exit 1; }; \
+    test -s /usr/src/php.tar.xz || { echo "/usr/src/php.tar.xz is missing" >&2; exit 1; }; \
     composer --version; \
     git --version; \
     mailcatcher --help > /dev/null
