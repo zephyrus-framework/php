@@ -1,0 +1,133 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: "Push the images, the registry cache and the multi-arch tags"
+        required: true
+        type: boolean
+      fresh:
+        description: "Build without the layer cache, so every apt step runs again"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        # The one place the references of each PHP version are set.
+        php:
+          - tag: "8.4"
+            version: 8.4.28
+            apcu: 819fce90c469a5666b1706036cd66120af419f1f # v5.1.28
+            ssh2: ec4818971a469893dc68906dbd0e36b2915e846f # 1.3.1
+            xdebug: 127bbcb980400752221cfaa54bdc1420e6ef3c12 # 3.5.3
+          - tag: "8.6"
+            version: 8.6.0
+            apcu: fb2c942552a3f5dab7f4dea4afb5cf0831222c57 # no release builds on 8.6 yet
+            ssh2: ec4818971a469893dc68906dbd0e36b2915e846f # 1.3.1, later releases need libssh2 1.11
+            xdebug: 85f513aca01e2edb9b854b6c1bb0f550e62f887b # 3.6.0alpha2-dev
+        platform:
+          - runner: ubuntu-latest
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    env:
+      TAG: ${{ matrix.php.tag }}
+      ARCH: ${{ matrix.platform.architecture }}
+      CACHE: ghcr.io/${{ github.repository }}:cache-${{ matrix.php.tag }}-${{ matrix.platform.architecture }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: inputs.publish
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the prod target
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prod
+          build-args: |
+            PHP_VERSION=${{ matrix.php.version }}
+            APCU_COMMIT=${{ matrix.php.apcu }}
+            SSH2_COMMIT=${{ matrix.php.ssh2 }}
+            XDEBUG_COMMIT=${{ matrix.php.xdebug }}
+          cache-from: type=registry,ref=${{ env.CACHE }}
+          tags: ${{ env.IMAGE }}:${{ matrix.php.tag }}-${{ matrix.platform.architecture }}
+          platforms: linux/${{ matrix.platform.architecture }}
+          pull: true
+          no-cache: ${{ inputs.fresh }}
+          push: false
+          load: true
+
+      - name: Check the prod target
+        run: ./check-image.sh "$IMAGE:$TAG-$ARCH"
+
+      # The dev target holds the three stages, so its build exports the cache of all of them.
+      - name: Build the dev target
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: dev
+          build-args: |
+            PHP_VERSION=${{ matrix.php.version }}
+            APCU_COMMIT=${{ matrix.php.apcu }}
+            SSH2_COMMIT=${{ matrix.php.ssh2 }}
+            XDEBUG_COMMIT=${{ matrix.php.xdebug }}
+          cache-from: type=registry,ref=${{ env.CACHE }}
+          cache-to: ${{ inputs.publish && format('type=registry,ref={0},mode=max', env.CACHE) || '' }}
+          tags: ${{ env.IMAGE }}:${{ matrix.php.tag }}-dev-${{ matrix.platform.architecture }}
+          platforms: linux/${{ matrix.platform.architecture }}
+          pull: true
+          no-cache: ${{ inputs.fresh }}
+          push: false
+          load: true
+
+      - name: Push both images
+        if: inputs.publish
+        run: |
+          docker push "$IMAGE:$TAG-$ARCH"
+          docker push "$IMAGE:$TAG-dev-$ARCH"
+
+  manifests:
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The tags of the build matrix.
+        tag: ["8.4", "8.6"]
+    env:
+      TAG: ${{ matrix.tag }}
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push the multi-arch manifests
+        run: |
+          for tag in "$TAG" "$TAG-dev"; do
+            docker manifest create "$IMAGE:$tag" \
+              --amend "$IMAGE:$tag-amd64" \
+              --amend "$IMAGE:$tag-arm64"
+            docker manifest push "$IMAGE:$tag"
+          done

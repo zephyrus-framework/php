@@ -1,0 +1,27 @@
+name: Publish
+
+on:
+  push:
+    branches:
+      - main
+  # Every Monday the images are rebuilt without cache, from a fresh pull of the official image, so the security fixes
+  # of Debian and Apache reach every tag even when nothing is pushed here. A manual run rebuilds the same way.
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# A scheduled rebuild and a push never publish at the same time.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    uses: ./.github/workflows/build.yml
+    with:
+      publish: true
+      fresh: ${{ github.event_name != 'push' }}
