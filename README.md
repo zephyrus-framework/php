@@ -2,8 +2,8 @@
 
 # zephyrus-framework/php
 
-The base Docker image of Zephyrus applications: PHP on Apache, Debian Bookworm, built from the official
-`php:<version>-apache-bookworm` image. Published as `ghcr.io/zephyrus-framework/php`.
+The base Docker image of Zephyrus applications: PHP on Apache, Debian 13 (trixie), built from the official
+`php:<version>-apache-trixie` image. Published as `ghcr.io/zephyrus-framework/php`.
 
 | Tag | Target | For |
 |---|---|---|
@@ -182,6 +182,42 @@ What changes for an image built on top:
 * `8.4` and `8.6` run `apache2-foreground` alone, on port 80: no Supervisor program, no MailCatcher, no cron. Those
   stay in the `-dev` tags.
 * No per-architecture tag: each tag covers amd64 and arm64.
+
+## Moving to Debian 13 (trixie)
+
+The tags `8.4`, `8.4-dev`, `8.6` and `8.6-dev` moved from Debian 12 (bookworm) to Debian 13 (trixie). An application
+picks the change up at its next build on the same tags (`docker build --pull`). What changes:
+
+* glibc 2.41 instead of 2.36, ICU 76 instead of 72, OpenSSL 3.5 instead of 3.0, and Ruby 3.3 instead of 3.1 in `-dev`.
+* Locale data follows ICU 76. Run the application's formatting tests. Time zone names in the `FULL` and `LONG` date
+  styles change for some zones: in `America/Montreal`, `UTC−04:00` becomes `heure avancée de l’Est` (`fr_CA`) and
+  `GMT-4` becomes `EDT` (`en_CA`), while `America/Toronto` and `UTC` do not change. The `SHORT` style of `en_CA` becomes
+  `2026-03-07`, and `localeconv()` reports a `mon_grouping` of `[3]` instead of `[3,3]`. Number formats and the
+  `Collator` order are unchanged.
+* `pdo_pgsql` and `pgsql` link `libpq` 17 (bookworm: 15). Debian 13 ships `postgresql-17` and its client: a derived
+  image installs them without the PGDG repository.
+* MailCatcher is 0.11.0, installed with `bundle3.3`.
+* Some `apt` packages were renamed. A derived image that installs one of the old names fails to build:
+
+| Bookworm | Trixie |
+|---|---|
+| `libcurl4` | `libcurl4t64` |
+| `libssh2-1` | `libssh2-1t64` |
+| `libfreetype6-dev` | `libfreetype-dev` |
+| `rubygems` | `ruby-rubygems` (installed with `ruby-dev`), and `bundler` for the `bundle` command |
+
+To stay on Debian 12, pin the digest of the bookworm image in the `FROM` line, for example
+`ghcr.io/zephyrus-framework/php:8.4@sha256:...`:
+
+| Tag | Bookworm digest |
+|---|---|
+| `8.4` | `sha256:acfbe0dcad654baec96bf0dbfddd70dc9aa3563e2d838e4681a631de2cf59a4b` |
+| `8.4-dev` | `sha256:4bd0b1e4acb246ac111b7bc1f653f77194b3dbd4877ab4551af1f47124e4c99d` |
+| `8.6` | `sha256:15abcdfe719275caf35caacc2a1492a28b1c647935e713ec4ada181764b8d3ad` |
+| `8.6-dev` | `sha256:882671019bab875d2e2ae0bf6a15b9a4726fe1d42f3e0db4e5d6ea5cb704731b` |
+
+A pinned digest gets no further Debian or PHP security fix: use it as a short stop while the application is fixed, not
+as a place to stay.
 
 ## License
 
