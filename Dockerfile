@@ -71,14 +71,25 @@ RUN set -eu; \
     modules="$(php -m 2>&1)"; \
     case "$modules" in *Warning*|*Fatal*|*'Unable to load'*) printf '%s\n' "$modules" >&2; exit 1 ;; esac
 
-# Debian's 000-default (DocumentRoot /var/www/html) is disabled and the image's own site enabled in its place, so a
-# downstream image can turn either off with a2dissite. mod_status and mod_autoindex are off, their files kept.
+ENV APACHE_PORT=80
+
+# Apache serves public/ alone, on $APACHE_PORT, and reads a .htaccess in public/ alone. The official docker-php.conf
+# allows overrides on all of /var/www/: they are turned off there.
+COPY server.conf /etc/apache2/conf-available/server.conf
 COPY vhosts/default.conf /etc/apache2/sites-available/default.conf
 RUN set -eu; \
+    mkdir /var/www/html/public; \
+    sed -i 's#^Listen 80$#Listen ${APACHE_PORT}#' /etc/apache2/ports.conf; \
+    grep -qx 'Listen ${APACHE_PORT}' /etc/apache2/ports.conf || { echo "ports.conf: no Listen 80 to replace" >&2; exit 1; }; \
+    sed -i 's#^\([[:space:]]*AllowOverride\)[[:space:]][[:space:]]*All[[:space:]]*$#\1 None#' /etc/apache2/conf-available/docker-php.conf; \
+    if grep -qiE '^[[:space:]]*AllowOverride[[:space:]]+All' /etc/apache2/conf-available/docker-php.conf; then \
+        echo "docker-php.conf still allows overrides" >&2; exit 1; \
+    fi; \
     a2enmod rewrite headers expires; \
     a2dismod -f status autoindex; \
     a2dissite 000-default; \
-    a2ensite default
+    a2ensite default; \
+    a2enconf server
 
 # AllowEncodedSlashes is not inherited from the server config into a <VirtualHost>, so it must sit inside every one,
 # or a path holding %2F gets Apache's own 404 before PHP runs. 000-default.conf gets it too, for an image that enables
@@ -92,8 +103,7 @@ RUN set -eu; \
         vhosts="$(grep -ciE '^[[:space:]]*<VirtualHost[[:space:]>]' "$vhost" || true)"; \
         patched="$(grep -ciE '^[[:space:]]*AllowEncodedSlashes[[:space:]]+NoDecode[[:space:]]*$' "$vhost" || true)"; \
         test "$vhosts" = "$patched" || { echo "$vhost: $vhosts <VirtualHost>, $patched AllowEncodedSlashes NoDecode" >&2; exit 1; }; \
-    done; \
-    apache2ctl -t
+    done
 
 # Debian's security.conf ships ServerTokens OS and ServerSignature On, which name Apache's release and distribution in
 # every Server header and error page. They are rewritten in that file, so each has a single value, and the build fails
@@ -105,8 +115,7 @@ RUN set -eu; \
         /etc/apache2/conf-available/security.conf; \
     active="$(grep -hiE '^[[:space:]]*Server(Tokens|Signature)[[:space:]]' /etc/apache2/apache2.conf \
         /etc/apache2/conf-enabled/*.conf /etc/apache2/sites-enabled/*.conf | sed 's#^[[:space:]]*##; s#[[:space:]]*$##' | sort -u)"; \
-    test "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod')" || { echo "Server directives: $active" >&2; exit 1; }; \
-    apache2ctl -t
+    test "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod')" || { echo "Server directives: $active" >&2; exit 1; }
 
 # No TLS in the image: it ends in front of the container, so there is no mod_ssl, no 443 vhost and no private key,
 # which anyone pulling this public image would hold. The files of mod_ssl, mod_status and mod_autoindex stay in
@@ -120,7 +129,9 @@ RUN set -eu; \
     for module in rewrite headers expires; do \
         printf '%s\n' "$modules" | grep -q " ${module}_module " || { echo "$module is not loaded" >&2; exit 1; }; \
     done; \
-    if printf '%s\n' "$modules" | grep -qE ' (ssl|status|autoindex)_module '; then echo "ssl, status or autoindex is loaded" >&2; exit 1; fi
+    if printf '%s\n' "$modules" | grep -qE ' (ssl|status|autoindex)_module '; then echo "ssl, status or autoindex is loaded" >&2; exit 1; fi; \
+    syntax="$(apache2ctl -t 2>&1)"; \
+    test "$syntax" = 'Syntax OK' || { echo "apache2ctl -t: $syntax" >&2; exit 1; }
 
 # Debian's locale-gen takes no argument: it builds the locales /etc/locale.gen lists.
 RUN set -eu; \
@@ -129,10 +140,13 @@ RUN set -eu; \
 
 ENV TZ="America/Montreal"
 
-RUN rm -rf /usr/src/*
-
-# No setuid or setgid file: nothing in the image needs to gain privileges.
-RUN find / -xdev -perm /6000 -type f -exec chmod ug-s {} +
+# The application root belongs to root, not to www-data (the official image leaves it 1777). No setuid or setgid
+# file: nothing in the image needs to gain privileges.
+RUN set -eu; \
+    chown root:root /var/www/html; \
+    chmod 755 /var/www/html; \
+    rm -rf /usr/src/*; \
+    find / -xdev -perm /6000 -type f -exec chmod ug-s {} +
 
 EXPOSE 80
 CMD ["apache2-foreground"]
