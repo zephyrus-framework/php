@@ -1,4 +1,5 @@
 *
+!build-extension.sh
 !custom.ini
 !dev.ini
 !php2shell.ini

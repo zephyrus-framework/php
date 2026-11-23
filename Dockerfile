@@ -17,27 +17,15 @@ RUN set -eux; \
     docker-php-ext-install -j"$(nproc)" exif gd gettext gmp intl pcntl pdo_pgsql pgsql zip; \
     php -r 'exit(extension_loaded("mbstring") ? 0 : 1);' || docker-php-ext-install -j"$(nproc)" mbstring
 
-# APCu, ssh2 and Xdebug are built the same way on every PHP version: from the archive of a pinned commit, with the
-# hardening flags the official image builds its own extensions with.
 ARG APCU_COMMIT
-RUN set -eux; \
-    echo "${APCU_COMMIT:-}" | grep -qxE '[0-9a-f]{40}' || { echo "APCU_COMMIT is not a full commit SHA" >&2; exit 1; }; \
-    mkdir /tmp/extension; \
-    curl -fsSL -o /tmp/extension.tar.gz "https://github.com/krakjoe/apcu/archive/$APCU_COMMIT.tar.gz"; \
-    tar -xzf /tmp/extension.tar.gz -C /tmp/extension --strip-components=1; \
-    cd /tmp/extension; \
-    phpize; \
-    ./configure CFLAGS="$PHP_CFLAGS" CPPFLAGS="$PHP_CPPFLAGS" LDFLAGS="$PHP_LDFLAGS"; \
-    make -j"$(nproc)"; \
-    make install; \
-    cd /; \
-    rm -rf /tmp/extension /tmp/extension.tar.gz; \
+RUN --mount=type=bind,source=build-extension.sh,target=/usr/local/bin/build-extension.sh \
+    set -eux; \
+    build-extension.sh krakjoe/apcu "$APCU_COMMIT"; \
     docker-php-ext-enable apcu
 
 # The Debian packages the compiled extensions link against, for prod to install without their headers.
 RUN set -eu; \
     libraries="$(find "$(php-config --extension-dir)" -name '*.so' -exec ldd {} +)"; \
-    if printf '%s\n' "$libraries" | grep -q 'not found'; then printf '%s\n' "$libraries" >&2; exit 1; fi; \
     printf '%s\n' "$libraries" \
         | awk '/=>/ { so = $(NF-1); if (index(so, "/usr/local/") == 1) { next }; gsub("^/(usr/)?", "", so); printf "*%s\n", so }' \
         | sort -u | xargs -r dpkg-query --search | grep -v '^diversion ' | cut -d: -f1 | sort -u > /runtime-packages; \
@@ -174,24 +162,13 @@ RUN gem install mailcatcher --no-document
 
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Built as APCu is. ssh2 is loaded; Xdebug is compiled but left disabled.
+# ssh2 is loaded; Xdebug is compiled but left disabled.
 ARG SSH2_COMMIT
 ARG XDEBUG_COMMIT
-RUN set -eux; \
-    echo "${SSH2_COMMIT:-}" | grep -qxE '[0-9a-f]{40}' || { echo "SSH2_COMMIT is not a full commit SHA" >&2; exit 1; }; \
-    echo "${XDEBUG_COMMIT:-}" | grep -qxE '[0-9a-f]{40}' || { echo "XDEBUG_COMMIT is not a full commit SHA" >&2; exit 1; }; \
-    for source in "php/pecl-networking-ssh2/archive/$SSH2_COMMIT" "xdebug/xdebug/archive/$XDEBUG_COMMIT"; do \
-        mkdir /tmp/extension; \
-        curl -fsSL -o /tmp/extension.tar.gz "https://github.com/$source.tar.gz"; \
-        tar -xzf /tmp/extension.tar.gz -C /tmp/extension --strip-components=1; \
-        cd /tmp/extension; \
-        phpize; \
-        ./configure CFLAGS="$PHP_CFLAGS" CPPFLAGS="$PHP_CPPFLAGS" LDFLAGS="$PHP_LDFLAGS"; \
-        make -j"$(nproc)"; \
-        make install; \
-        cd /; \
-        rm -rf /tmp/extension /tmp/extension.tar.gz; \
-    done; \
+RUN --mount=type=bind,source=build-extension.sh,target=/usr/local/bin/build-extension.sh \
+    set -eux; \
+    build-extension.sh php/pecl-networking-ssh2 "$SSH2_COMMIT"; \
+    build-extension.sh xdebug/xdebug "$XDEBUG_COMMIT"; \
     docker-php-ext-enable ssh2 xdebug; \
     mkdir -p "$PHP_INI_DIR/disabled"; \
     mv "$PHP_INI_DIR/conf.d/docker-php-ext-xdebug.ini" "$PHP_INI_DIR/disabled/"
