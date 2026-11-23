@@ -1,5 +1,5 @@
 #!/bin/sh
-# Proves what the prod target carries and stops at the first failure: ./check-image.sh <image>
+# Checks what the prod target carries, as root, and stops at the first failure: ./check-image.sh <image>
 set -eu
 
 [ "$#" -eq 1 ] || { echo "usage: $0 <image>" >&2; exit 2; }
@@ -14,12 +14,13 @@ ports=$(docker image inspect -f '{{range $port, $_ := .Config.ExposedPorts}}{{$p
 [ "$ports" = '80/tcp ' ] || fail "the exposed ports are $ports, not 80/tcp alone"
 pass "Cmd is apache2-foreground, 80/tcp is the one exposed port"
 
-docker run --rm -i --entrypoint sh "$image" -s <<'INSIDE'
+docker run --rm -i --user 0 --entrypoint sh "$image" -s <<'INSIDE'
 set -u
 
 fail() { echo "check-image: FAIL: $*" >&2; exit 1; }
 pass() { echo "check-image: ok    $*"; }
-on() { php -r 'exit(filter_var(ini_get($argv[1]), FILTER_VALIDATE_BOOLEAN) ? 0 : 1);' "$1"; }
+newline='
+'
 
 tools="composer git ssh scp sftp gcc cc g++ c++ make ruby gem mailcatcher cron crontab exim4 sendmail wget"
 for binary in $tools; do
@@ -29,9 +30,16 @@ packages=$(dpkg-query -W -f '${Package}\n' | grep -E -- '-dev(:|$)')
 [ -z "$packages" ] || fail "development packages are installed: $packages"
 pass "none of $tools, and no -dev package"
 
-setid=$(find / -xdev -perm /6000 -type f 2>/dev/null)
+setid=$(find / -xdev -perm /6000 -type f 2>&1) || fail "find: $setid"
 [ -z "$setid" ] || fail "setuid or setgid files: $setid"
 pass "no setuid or setgid file"
+
+keys=$(grep -rlI -D skip -e 'PRIVATE KEY-----' /etc /root /usr/local /var 2>&1)
+case $? in
+    0) fail "a private key is in the image: $keys" ;;
+    1) pass "no private key in /etc, /root, /usr/local or /var" ;;
+    *) fail "grep: $keys" ;;
+esac
 
 modules=$(php -m 2>&1) || fail "php -m failed: $modules"
 case "$modules" in *Warning*|*Fatal*|*'Unable to load'*) fail "php -m complains: $modules" ;; esac
@@ -45,34 +53,40 @@ php -r '$gd = gd_info(); exit($gd["WebP Support"] && $gd["JPEG Support"] && $gd[
 for module in xdebug ssh2; do
     printf '%s\n' "$modules" | grep -qix "$module" && fail "the $module module is loaded"
 done
-compiled=$(find /usr/local/lib/php -name xdebug.so -o -name ssh2.so)
+compiled=$(find /usr/local/lib/php -name xdebug.so -o -name ssh2.so 2>&1) || fail "find: $compiled"
 [ -z "$compiled" ] || fail "an xdebug or ssh2 extension is on disk: $compiled"
 named=$(grep -rli xdebug "$PHP_INI_DIR")
 [ -z "$named" ] || fail "a file of $PHP_INI_DIR names xdebug: $named"
-pass "php -m is clean, every module is loaded with pcntl, gd has WebP, JPEG and FreeType, no xdebug or ssh2"
+php -r 'exit(ini_get("apc.enable_cli") ? 0 : 1);' || fail "apc.enable_cli is off"
+pass "php -m is clean, every module is loaded with pcntl, gd has WebP, JPEG and FreeType, no xdebug or ssh2, apc.enable_cli on"
 
-on session.use_strict_mode || fail "session.use_strict_mode is off"
-on session.upload_progress.enabled && fail "session.upload_progress.enabled is on"
-on apc.enable_cli || fail "apc.enable_cli is off"
-pass "session.use_strict_mode on, session.upload_progress.enabled off, apc.enable_cli on"
-
-apache2ctl -t >/dev/null 2>&1 || fail "apache2ctl -t: $(apache2ctl -t 2>&1)"
-loaded=$(apache2ctl -M 2>/dev/null)
-for module in rewrite headers expires; do
-    printf '%s\n' "$loaded" | grep -q " ${module}_module " || fail "Apache does not load $module"
-done
+syntax=$(apache2ctl -t 2>&1)
+[ "$syntax" = 'Syntax OK' ] || fail "apache2ctl -t: $(printf '%s' "$syntax" | tr '\n' ' ')"
+loaded=$(apache2ctl -M 2>&1) || fail "apache2ctl -M: $loaded"
+loaded=$(printf '%s\n' "$loaded" | sed -n 's/^ \([a-z0-9_]*\) (.*)$/\1/p' | sort | tr '\n' ' ')
+allowed="access_compat_module alias_module auth_basic_module authn_core_module authn_file_module authz_core_module \
+authz_host_module authz_user_module core_module deflate_module dir_module env_module expires_module filter_module \
+headers_module http_module log_config_module logio_module mime_module mpm_prefork_module negotiation_module \
+php_module reqtimeout_module rewrite_module setenvif_module so_module unixd_module version_module watchdog_module"
+extra=''
+missing=''
+for module in $loaded; do case " $allowed " in *" $module "*) ;; *) extra="$extra $module" ;; esac; done
+for module in $allowed; do case " $loaded " in *" $module "*) ;; *) missing="$missing $module" ;; esac; done
+[ -z "$extra$missing" ] || fail "Apache loads modules outside the allowed list:${extra:- none}; misses:${missing:- none}"
 for module in ssl status autoindex; do
-    printf '%s\n' "$loaded" | grep -q " ${module}_module " && fail "Apache loads $module"
     [ -e "/etc/apache2/mods-available/$module.load" ] || fail "$module.load is gone from mods-available"
 done
 sites=$(ls -A /etc/apache2/sites-enabled)
 [ "$sites" = default.conf ] || fail "sites-enabled holds $sites, not default.conf alone"
-keys=$(find /etc/ssl/private -type f 2>/dev/null)
-[ -z "$keys" ] || fail "a private key is in the image: $keys"
-active=$(grep -hiE '^[[:space:]]*Server(Tokens|Signature)[[:space:]]' /etc/apache2/apache2.conf \
+active=$(grep -hiE '^[[:space:]]*(Server(Tokens|Signature)|TraceEnable)[[:space:]]' /etc/apache2/apache2.conf \
     /etc/apache2/conf-enabled/*.conf /etc/apache2/sites-enabled/*.conf | sed 's#^[[:space:]]*##; s#[[:space:]]*$##' | sort -u)
-[ "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod')" ] || fail "the Server directives are: $active"
-pass "Apache: rewrite, headers and expires loaded, no ssl, status or autoindex (files kept), default.conf alone, no key, ServerTokens Prod, ServerSignature Off"
+[ "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod\nTraceEnable Off')" ] || fail "the Server and Trace directives are: $(printf '%s' "$active" | tr '\n' ';')"
+settings=$(apache2ctl -S 2>&1)
+root=$(printf '%s\n' "$settings" | sed -n 's/^Main DocumentRoot: //p')
+[ "$root" = '"/var/www/html/public"' ] || fail "the main server's DocumentRoot is $root, not \"/var/www/html/public\""
+owner=$(stat -c '%U:%G %a' /var/www/html)
+[ "$owner" = 'root:root 755' ] || fail "/var/www/html is $owner, not root:root 755"
+pass "Apache: only the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod, ServerSignature Off, TraceEnable Off, main DocumentRoot public/, /var/www/html root:root 755"
 
 command -v supervisord >/dev/null || fail "supervisord is not installed"
 tables=$(ls -A /etc/supervisor/conf.d)
@@ -85,21 +99,58 @@ for name in en_CA.utf8 fr_CA.utf8; do
 done
 pass "en_CA.utf8 and fr_CA.utf8 generated"
 
+# Port 8081 is claimed by no <VirtualHost>, so the main server answers it.
+[ -n "${PHP_VERSION:-}" ] || fail "PHP_VERSION is not set in the image"
 mkdir -p /var/www/html/public
-echo '<?php echo PHP_VERSION;' > /var/www/html/public/index.php
-apache2-foreground >/dev/null 2>&1 &
+cat > /var/www/html/public/index.php <<'PHP'
+<?php
+echo 'version=', PHP_VERSION, "\n";
+foreach (['display_errors', 'display_startup_errors', 'log_errors', 'zend.exception_ignore_args',
+    'session.use_strict_mode', 'session.upload_progress.enabled'] as $name) {
+    $value = ini_get($name);
+    $flag = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    echo $name, '=', $flag === null ? var_export($value, true) : ($flag ? 'on' : 'off'), "\n";
+}
+PHP
+echo 'Header set X-Public-Htaccess read' > /var/www/html/public/.htaccess
+echo 'Header set X-Root-Htaccess read' > /var/www/html/.htaccess
+echo 'outside public/' > /var/www/html/private.txt
+apache2-foreground -C 'Listen 127.0.0.1:8081' >/tmp/apache.log 2>&1 &
 for _ in $(seq 50); do
-    curl -s -o /dev/null http://127.0.0.1/ && break
+    curl -s -o /dev/null "http://127.0.0.1:$APACHE_PORT/" && break
     sleep 0.2
 done
-headers=$(curl -sS --max-time 5 -D - -o /tmp/body http://127.0.0.1/ | tr -d '\r') || fail "Apache does not answer on port 80"
-version=$(php -r 'echo PHP_VERSION;')
-[ "$(cat /tmp/body)" = "$version" ] || fail "/ answered $(cat /tmp/body), not $version"
-server=$(printf '%s\n' "$headers" | sed -n 's/^[Ss]erver: //p')
-[ "$server" = Apache ] || fail "the Server header is $server, not Apache"
-status=$(curl -sS --max-time 5 http://127.0.0.1/server-status) || fail "no answer for /server-status"
+curl -s -o /dev/null "http://127.0.0.1:$APACHE_PORT/" || fail "Apache does not answer on port $APACHE_PORT: $(cat /tmp/apache.log)"
+
+expected="version=$PHP_VERSION
+display_errors=off
+display_startup_errors=off
+log_errors=on
+zend.exception_ignore_args=on
+session.use_strict_mode=on
+session.upload_progress.enabled=off"
+for port in "$APACHE_PORT" 8081; do
+    body=$(curl -sS --max-time 5 -D /tmp/headers "http://127.0.0.1:$port/" 2>&1)
+    IFS=$newline
+    for line in $expected; do
+        served=$(printf '%s\n' "$body" | awk -F= -v name="${line%%=*}" '$1 == name')
+        [ "$served" = "$line" ] || fail "port $port: Apache serves ${served:-no ${line%%=*}}, not $line"
+    done
+    unset IFS
+    headers=$(tr -d '\r' < /tmp/headers)
+    server=$(printf '%s\n' "$headers" | sed -n 's/^[Ss]erver: //p')
+    [ "$server" = Apache ] || fail "port $port: the Server header is $server, not Apache"
+    powered=$(printf '%s\n' "$headers" | grep -i '^X-Powered-By:') && fail "port $port: Apache sends $powered"
+    printf '%s\n' "$headers" | grep -qi '^X-Public-Htaccess: read$' || fail "port $port: public/.htaccess is not read"
+    printf '%s\n' "$headers" | grep -qi '^X-Root-Htaccess:' && fail "port $port: /var/www/html/.htaccess is read"
+    private=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/private.txt" 2>&1)
+    [ "$private" = 404 ] || fail "port $port: a file outside public/ answers $private, not 404"
+    trace=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -X TRACE "http://127.0.0.1:$port/" 2>&1)
+    [ "$trace" = 405 ] || fail "port $port: TRACE answers $trace, not 405"
+done
+status=$(curl -sS --max-time 5 "http://127.0.0.1:$APACHE_PORT/server-status" 2>&1)
 case "$status" in *'Apache Server Status'*) fail "/server-status answers the mod_status page" ;; esac
-pass "Apache serves PHP $version, Server: Apache, no /server-status page"
+pass "Apache serves PHP $PHP_VERSION with display_errors, display_startup_errors off, log_errors, zend.exception_ignore_args, session.use_strict_mode on, session.upload_progress.enabled off, no X-Powered-By, Server: Apache, .htaccess read in public/ alone, nothing outside public/, TRACE refused, on port $APACHE_PORT and on a port no vhost claims"
 
 echo "check-image: PASS"
 INSIDE
