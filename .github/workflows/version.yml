@@ -1,0 +1,179 @@
+name: Version
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The PHP minor version, which the official image tags carry"
+        required: true
+        type: string
+      apcu:
+        description: "The APCu commit"
+        required: true
+        type: string
+      ssh2:
+        description: "The ssh2 commit"
+        required: true
+        type: string
+      xdebug:
+        description: "The Xdebug commit"
+        required: true
+        type: string
+      publish:
+        description: "Push the images, the registry cache and the multi-arch tags"
+        required: true
+        type: boolean
+      fresh:
+        description: "Build without the layer cache, so every apt step runs again"
+        required: true
+        type: boolean
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: ${{ inputs.version }} on ${{ matrix.architecture }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    env:
+      PLATFORM: linux/${{ matrix.architecture }}
+      CACHE: ghcr.io/${{ github.repository }}:cache-${{ inputs.version }}-${{ matrix.architecture }}
+      BUILD_ARGS: |
+        PHP_VERSION=${{ inputs.version }}
+        APCU_COMMIT=${{ inputs.apcu }}
+        SSH2_COMMIT=${{ inputs.ssh2 }}
+        XDEBUG_COMMIT=${{ inputs.xdebug }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GitHub Container Registry
+        if: inputs.publish
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the prod target
+        id: prod
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: prod
+          build-args: ${{ env.BUILD_ARGS }}
+          cache-from: type=registry,ref=${{ env.CACHE }}
+          platforms: ${{ env.PLATFORM }}
+          pull: true
+          no-cache: ${{ inputs.fresh }}
+          tags: zephyrus-php:check
+          load: true
+
+      - name: Check the prod target
+        run: ./check-image.sh zephyrus-php:check
+
+      # The builds below take the prod layers from the builder's cache, as checked above: a fresh run rebuilds the dev
+      # stage alone.
+      - name: Build the dev target
+        id: dev
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: dev
+          build-args: ${{ env.BUILD_ARGS }}
+          cache-from: ${{ !inputs.fresh && format('type=registry,ref={0}', env.CACHE) || '' }}
+          cache-to: ${{ inputs.publish && format('type=registry,ref={0},mode=max', env.CACHE) || '' }}
+          no-cache-filters: ${{ inputs.fresh && 'dev' || '' }}
+          platforms: ${{ env.PLATFORM }}
+          outputs: ${{ inputs.publish && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
+
+      - name: Push the prod target by digest
+        id: push
+        if: inputs.publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: prod
+          build-args: ${{ env.BUILD_ARGS }}
+          cache-from: ${{ !inputs.fresh && format('type=registry,ref={0}', env.CACHE) || '' }}
+          platforms: ${{ env.PLATFORM }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export the digests
+        if: inputs.publish
+        env:
+          PROD: ${{ steps.push.outputs.digest }}
+          DEV: ${{ steps.dev.outputs.digest }}
+        run: |
+          checked=$(docker image inspect -f '{{json .RootFS.Layers}}' zephyrus-php:check | jq -c .)
+          pushed=$(docker buildx imagetools inspect --format '{{json .Image.RootFS.DiffIDs}}' "$IMAGE@$PROD" | jq -c .)
+          if [ "$pushed" != "$checked" ]; then
+            echo "The layers of the prod image pushed, $pushed, are not those checked, $checked." >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/digests/prod" "$RUNNER_TEMP/digests/dev"
+          touch "$RUNNER_TEMP/digests/prod/${PROD#sha256:}" "$RUNNER_TEMP/digests/dev/${DEV#sha256:}"
+
+      - name: Upload the digests
+        if: inputs.publish
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ inputs.version }}-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs only when both architectures of this version passed in this run.
+  manifests:
+    name: ${{ inputs.version }} manifests
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-${{ inputs.version }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push the multi-arch manifests
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          for target in prod dev; do
+            count=$(find "$target" -type f | wc -l)
+            if [ "$count" -ne 2 ]; then
+              echo "$target: $count digests, not one per architecture" >&2
+              exit 1
+            fi
+          done
+          for target in prod dev; do
+            tag=$VERSION
+            if [ "$target" = dev ]; then tag=$VERSION-dev; fi
+            sources=()
+            for digest in "$target"/*; do sources+=("$IMAGE@sha256:${digest#"$target"/}"); done
+            docker buildx imagetools create -t "$IMAGE:$tag" "${sources[@]}"
+          done
