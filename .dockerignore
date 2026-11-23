@@ -1,0 +1,6 @@
+*
+!custom.ini
+!php2shell.ini
+!supervisord.conf
+!vhosts/default.conf
+!xdebug.ini
