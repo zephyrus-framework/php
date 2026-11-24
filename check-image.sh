@@ -104,9 +104,9 @@ pass "php -m is clean, every module is loaded with pcntl, gd has WebP, JPEG and 
 pass "no xdebug or ssh2, apc.enable_cli on"
 
 [ -n "${PHP_VERSION:-}" ] || fail "PHP_VERSION is not set in the image"
-tree=$(ls -A /var/www/html)
-[ "$tree" = public ] && [ ! -L /var/www/html/public ] \
-    || fail "/var/www/html holds ${tree:-nothing}, not a public/ directory alone"
+[ ! -L /var/www/html/public ] || fail "/var/www/html/public is a link to $(readlink /var/www/html/public)"
+tree=$(ls -A /var/www/html | tr '\n' ' ')
+[ "$tree" = 'public ' ] || fail "/var/www/html holds ${tree% }, not a public/ directory alone"
 tree=$(ls -A /var/www/html/public)
 [ -z "$tree" ] || fail "/var/www/html/public is not empty: $tree"
 cat > /var/www/html/public/index.php <<'PHP'
@@ -128,7 +128,7 @@ echo 'outside public/' > /var/www/html/private.txt
 
 syntax=$(apache2-foreground -t 2>&1)
 [ "$syntax" = 'Syntax OK' ] || fail "apache2-foreground -t: $(printf '%s' "$syntax" | tr '\n' ' ')"
-loaded=$(apache2-foreground -M 2>&1) || fail "apache2-foreground -M: $loaded"
+loaded=$(apache2-foreground -t -c 'Define DUMP_MODULES' 2>&1) || fail "apache2-foreground, DUMP_MODULES: $loaded"
 loaded=$(printf '%s\n' "$loaded" | sed -n 's/^ \([a-z0-9_]*\) (.*)$/\1/p' | sort | tr '\n' ' ')
 allowed="access_compat_module alias_module auth_basic_module authn_core_module authn_file_module authz_core_module \
 authz_host_module authz_user_module core_module deflate_module dir_module env_module expires_module filter_module \
@@ -145,11 +145,6 @@ for module in ssl status autoindex; do
 done
 sites=$(ls -A /etc/apache2/sites-enabled)
 [ "$sites" = default.conf ] || fail "sites-enabled holds $sites, not default.conf alone"
-active=$(grep -hiE '^[[:space:]]*(Server(Tokens|Signature)|TraceEnable)[[:space:]]' /etc/apache2/apache2.conf \
-    /etc/apache2/conf-enabled/*.conf /etc/apache2/sites-enabled/*.conf \
-    | sed 's#^[[:space:]]*##; s#[[:space:]]*$##' | sort -u)
-[ "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod\nTraceEnable Off')" ] \
-    || fail "the Server and Trace directives are: $(printf '%s' "$active" | tr '\n' ';')"
 settings=$(apache2-foreground -S 2>&1)
 root=$(printf '%s\n' "$settings" | sed -n 's/^Main DocumentRoot: //p')
 [ "$root" = '"/var/www/html/public"' ] || fail "the main server's DocumentRoot is $root, not \"/var/www/html/public\""
@@ -160,10 +155,16 @@ done
 info='LoadModule info_module /usr/lib/apache2/modules/mod_info.so'
 dumped=$(apache2-foreground -t -c "$info" -c 'Define DUMP_CONFIG' 2>&1) \
     || fail "apache2-foreground -t, DUMP_CONFIG: $dumped"
-routing=$(printf '%s\n' "$dumped" | sed 's/^[[:space:]]*//' | LC_ALL=C sort \
-    | grep -iE '^(Alias|AliasMatch|ScriptAlias|ScriptAliasMatch|Listen|DocumentRoot|Rewrite[a-z]*|<VirtualHost)'\
-'([[:space:]>]|$)')
+dumped=$(printf '%s\n' "$dumped" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+conditions=$(printf '%s\n' "$dumped" | grep -iE '^<(If|ElseIf|Else)([[:space:]>]|$)')
+[ -z "$conditions" ] || fail "Apache parses run-time conditions: $(printf '%s' "$conditions" | tr '\n' ';')"
+active=$(printf '%s\n' "$dumped" | grep -iE '^(Server(Tokens|Signature)|TraceEnable)[[:space:]]' | sort -u)
+[ "$active" = "$(printf 'ServerSignature Off\nServerTokens Prod\nTraceEnable Off')" ] \
+    || fail "the Server and Trace directives are: $(printf '%s' "$active" | tr '\n' ';')"
+routes='(Alias|AliasMatch|ScriptAlias|ScriptAliasMatch|Listen|DocumentRoot|Rewrite[a-z]*|<VirtualHost)([[:space:]>]|$)'
+routing=$(printf '%s\n' "$dumped" | LC_ALL=C sort | grep -iE "^$routes")
 wanted="<VirtualHost *:$APACHE_PORT>${newline}Alias /icons/ \"/usr/share/apache2/icons/\""
+# the server and the virtual host each declare the root
 wanted="$wanted${newline}DocumentRoot /var/www/html/public${newline}DocumentRoot /var/www/html/public"
 wanted="$wanted${newline}Listen $APACHE_PORT"
 [ "$routing" = "$wanted" ] \
@@ -231,6 +232,12 @@ pass "zend.exception_ignore_args, session.use_strict_mode on, session.upload_pro
 pass "nor auto_append_file, no X-Powered-By, Server: Apache, .htaccess read in public/ alone,"
 pass "/private.txt answering 404, TRACE refused,"
 pass "on port $APACHE_PORT and on a port no vhost claims"
+
+tree=$(LC_ALL=C ls -A /var/www/html | tr '\n' ' ')
+[ "$tree" = '.htaccess private.txt public ' ] || fail "after the probes, /var/www/html holds: $tree"
+tree=$(LC_ALL=C ls -A /var/www/html/public | tr '\n' ' ')
+[ "$tree" = '.htaccess index.php ' ] || fail "after the probes, /var/www/html/public holds: $tree"
+pass "nothing but the probe files in /var/www/html and public/ once the probes are served"
 
 echo "check-image: PASS"
 INSIDE
