@@ -172,10 +172,15 @@ jobs:
               exit 1
             fi
           done
-          for target in prod dev; do
-            tag=$VERSION
-            if [ "$target" = dev ]; then tag=$VERSION-dev; fi
-            sources=()
-            for digest in "$target"/*; do sources+=("$IMAGE@sha256:${digest#"$target"/}"); done
-            docker buildx imagetools create -t "$IMAGE:$tag" "${sources[@]}"
-          done
+          create() {
+            for target in prod dev; do
+              tag=$VERSION
+              if [ "$target" = dev ]; then tag=$VERSION-dev; fi
+              sources=()
+              for digest in "$target"/*; do sources+=("$IMAGE@sha256:${digest#"$target"/}"); done
+              docker buildx imagetools create "$@" -t "$IMAGE:$tag" "${sources[@]}"
+            done
+          }
+          # Both manifests are validated before either tag moves.
+          create --dry-run
+          create
