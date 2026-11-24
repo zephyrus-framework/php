@@ -24,7 +24,7 @@ jobs:
         php:
           - version: "8.4"
             apcu: 819fce90c469a5666b1706036cd66120af419f1f # v5.1.28
-            ssh2: ec4818971a469893dc68906dbd0e36b2915e846f # 1.3.1
+            ssh2: e5d1333605d58805ea317f4349458201786dd1ca # 1.6.1
             xdebug: 127bbcb980400752221cfaa54bdc1420e6ef3c12 # 3.5.3
           - version: "8.6"
             apcu: fb2c942552a3f5dab7f4dea4afb5cf0831222c57 # no release builds on 8.6 yet
