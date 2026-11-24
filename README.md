@@ -39,7 +39,8 @@ Everything in `prod`, plus:
 * ssh2, loaded;
 * Xdebug, compiled but disabled: its ini file waits in `/usr/local/etc/php/disabled/`, and
   `php -d zend_extension=xdebug.so` loads it for one command;
-* MailCatcher, with its dependencies at the versions of [`Gemfile.lock`](Gemfile.lock), and cron;
+* MailCatcher, with its dependencies at the versions of [`Gemfile.lock`](Gemfile.lock), and cron (a manual
+  `bundle lock` passes `--add-checksums`, or the `CHECKSUMS` section disappears without a word);
 * Supervisor runs Apache, MailCatcher and cron: `CMD ["/usr/bin/supervisord"]`, ports 80 and 1080.
 
 A `-dev` tag is never served: MailCatcher runs as root with no authentication. Publish its ports on the loopback
