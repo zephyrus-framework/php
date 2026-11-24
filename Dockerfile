@@ -80,7 +80,8 @@ RUN set -eu; \
     a2dismod -f status autoindex; \
     a2dissite 000-default; \
     a2ensite default; \
-    a2enconf server
+    a2enconf server; \
+    a2disconf serve-cgi-bin
 
 # AllowEncodedSlashes is not inherited into a <VirtualHost>: every enabled one carries it, and 000-default.conf too,
 # for an image that enables it again.
