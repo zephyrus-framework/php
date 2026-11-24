@@ -91,7 +91,7 @@ RUN composer install --no-dev --no-interaction --no-progress --prefer-dist
 FROM ghcr.io/zephyrus-framework/php:8.4
 COPY . /var/www/html
 COPY --from=vendor /src/vendor /var/www/html/vendor
-RUN find /var/www/html -perm /022 -exec chmod go-w {} +
+RUN find /var/www/html -perm /022 ! -type l -exec chmod go-w {} +
 USER www-data
 ```
 
