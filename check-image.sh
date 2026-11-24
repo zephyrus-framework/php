@@ -170,12 +170,21 @@ wanted="$wanted${newline}Listen $APACHE_PORT"
 [ "$routing" = "$wanted" ] \
     || fail "Apache parses this routing: $(printf '%s' "$routing" | tr '\n' ';')" \
         "not: $(printf '%s' "$wanted" | tr '\n' ';')"
+logs=$(printf '%s\n' "$dumped" \
+    | LC_ALL=C sort | grep -iE '^(ErrorLog|CustomLog|TransferLog|GlobalLog|ForensicLog|ScriptLog)[[:space:]]')
+wanted="CustomLog /var/log/apache2/access.log combined"
+wanted="$wanted${newline}CustomLog /var/log/apache2/other_vhosts_access.log vhost_combined"
+wanted="$wanted${newline}ErrorLog /var/log/apache2/error.log${newline}ErrorLog /var/log/apache2/error.log"
+[ "$logs" = "$wanted" ] \
+    || fail "Apache parses these log directives: $(printf '%s' "$logs" | tr '\n' ';')" \
+        "not: $(printf '%s' "$wanted" | tr '\n' ';')"
 vhosts=$(printf '%s\n' "$settings" | sed -n '/^VirtualHost configuration:/,/^ServerRoot:/p' | sed '1d;$d' | tr -s ' ')
 [ "$vhosts" = "*:$APACHE_PORT localhost (/etc/apache2/sites-enabled/default.conf:1)" ] \
     || fail "Apache serves these virtual hosts: $(printf '%s' "$vhosts" | tr '\n' ';')"
 pass "Apache: the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod,"
 pass "ServerSignature Off, TraceEnable Off, /var/www/html and public/ root:root 755; as Apache parses it,"
-pass "one virtual host, DocumentRoot public/, no Alias but /icons/, no Rewrite directive, Listen \$APACHE_PORT alone"
+pass "one virtual host, DocumentRoot public/, no Alias but /icons/, no Rewrite directive, Listen \$APACHE_PORT alone,"
+pass "the log directives aimed at the image's own log files"
 
 command -v supervisord >/dev/null || fail "supervisord is not installed"
 tables=$(ls -A /etc/supervisor/conf.d)

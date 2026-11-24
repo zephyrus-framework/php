@@ -112,15 +112,17 @@ first failure: `Cmd`, `Entrypoint`, exposed ports, `StopSignal`, the names of th
 `/etc`, `/root`, `/usr/local` or `/var`, every extension loaded without a warning (and neither Xdebug nor ssh2), the
 Apache modules against an allowlist, `ServerTokens`, `ServerSignature` and `TraceEnable`, the main `DocumentRoot`, the
 owner of `/var/www/html` and `public/`, the routing as Apache itself parses it (`DUMP_CONFIG`: no `<If>` condition, one
-virtual host, the `DocumentRoot`, no `Alias` beyond `/icons/`, no `Rewrite*` directive, no `Listen` beyond `$APACHE_PORT`), Supervisor
-without a program, the locales. Apache's configuration is read through `apache2-foreground`, the launcher the image
-runs, over a test application written into a `/var/www/html` that holds an empty `public/` alone. It then asks Apache
-itself, on port `$APACHE_PORT` and on a port no vhost claims, for the PHP version and directives it serves (with no
-`auto_prepend_file` or `auto_append_file`), its headers, which `.htaccess` it reads, `/private.txt` outside `public/`
-and `TRACE`, then that the probes wrote nothing else into `/var/www/html`. It needs Docker and nothing else, and prints `check-image: PASS` at the end. It catches the regressions it
-looks for; it is no proof that an image is safe, and it targets this base image, not an application image built on
-it: a `COPY` into `public/`, `USER www-data` or `APACHE_PORT=8080`, which "An application image" recommends, are
-refused. The CI runs it on every version and architecture before anything is published.
+virtual host, the `DocumentRoot`, no `Alias` beyond `/icons/`, no `Rewrite*` directive, no `Listen` beyond
+`$APACHE_PORT`, and log directives that aim at the image's own log files alone), Supervisor without a program, the
+locales. Apache's configuration is read through `apache2-foreground`, the launcher the image runs, over a test
+application written into a `/var/www/html` that holds an empty `public/` alone. It then asks Apache itself, on port
+`$APACHE_PORT` and on a port no vhost claims, for the PHP version and directives it serves (with no `auto_prepend_file`
+or `auto_append_file`), its headers, which `.htaccess` it reads, `/private.txt` outside `public/` and `TRACE`, then that
+the probes wrote nothing else into `/var/www/html`. It needs Docker and nothing else, and prints `check-image: PASS` at
+the end. It catches the regressions it looks for; it is no proof that an image is safe, and it targets this base image,
+not an application image built on it: a `COPY` into `public/`, `USER www-data` or `APACHE_PORT=8080`, which "An
+application image" recommends, are refused. The CI runs it on every version and architecture before anything is
+published.
 
 ## Building locally
 
