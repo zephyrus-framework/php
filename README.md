@@ -105,15 +105,21 @@ the build context with a `.dockerignore`.
 
 ## `check-image.sh`
 
-`./check-image.sh <image>` checks what the `prod` target carries, as root, and stops at the first failure: `Cmd` and
-exposed ports, no development tool or `-dev` package, no setuid or setgid file, no file capability, no private key in
-`/etc`, `/root`, `/usr/local` or `/var`, every extension loaded without a warning (and neither Xdebug nor ssh2), the Apache modules
-against an allowlist, `ServerTokens`, `ServerSignature` and `TraceEnable`, the main `DocumentRoot`, the owner of
-`/var/www/html` and `public/`, any `Alias` or `Listen` beyond `/icons/` and `$APACHE_PORT`, Supervisor without a program, the locales. It then asks Apache itself, on port `$APACHE_PORT` and on
-a port no vhost claims, for the PHP version and directives it serves, its headers, which `.htaccess` it reads, a file
-outside `public/` and `TRACE`. It needs Docker and nothing else, and prints `check-image: PASS` at the end. It catches
-the regressions it looks for; it is no proof that an image is safe. The CI runs it on every version and architecture
-before anything is published.
+`./check-image.sh <image>` checks what the `prod` target carries, as root, through its own entrypoint, and stops at the
+first failure: `Cmd`, `Entrypoint`, exposed ports, `StopSignal`, the names of the environment variables, the values of
+`APACHE_CONFDIR`, `APACHE_ENVVARS`, `PHP_INI_DIR`, `APACHE_PORT` and `PATH`, no `ONBUILD`, volume, `User`, `Shell` or
+`Healthcheck`, no development tool or `-dev` package, no setuid or setgid file, no file capability, no private key in
+`/etc`, `/root`, `/usr/local` or `/var`, every extension loaded without a warning (and neither Xdebug nor ssh2), the
+Apache modules against an allowlist, `ServerTokens`, `ServerSignature` and `TraceEnable`, the main `DocumentRoot`, the
+owner of `/var/www/html` and `public/`, the routing as Apache itself parses it (`DUMP_CONFIG`: one virtual host, the
+`DocumentRoot`, no `Alias` beyond `/icons/`, no `Rewrite*` directive, no `Listen` beyond `$APACHE_PORT`), Supervisor
+without a program, the locales. Apache's configuration is read through `apache2-foreground`, the launcher the image
+runs, over a test application written into a `/var/www/html` that holds an empty `public/` alone. It then asks Apache
+itself, on port `$APACHE_PORT` and on a port no vhost claims, for the PHP version and directives it serves (with no
+`auto_prepend_file` or `auto_append_file`), its headers, which `.htaccess` it reads, `/private.txt` outside `public/`
+and `TRACE`. It needs Docker and nothing else, and prints `check-image: PASS` at the end. It catches the regressions it
+looks for; it is no proof that an image is safe. The CI runs it on every version and architecture before anything is
+published.
 
 ## Building locally
 
