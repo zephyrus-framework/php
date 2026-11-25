@@ -118,7 +118,7 @@ foreach (['display_errors', 'display_startup_errors', 'log_errors', 'zend.except
     $flag = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
     echo $name, '=', $flag === null ? var_export($value, true) : ($flag ? 'on' : 'off'), "\n";
 }
-foreach (['auto_prepend_file', 'auto_append_file'] as $name) {
+foreach (['auto_prepend_file', 'auto_append_file', 'error_log'] as $name) {
     echo $name, '=', json_encode(ini_get($name), JSON_UNESCAPED_SLASHES), "\n";
 }
 PHP
@@ -218,7 +218,8 @@ zend.exception_ignore_args=on
 session.use_strict_mode=on
 session.upload_progress.enabled=off
 auto_prepend_file=\"\"
-auto_append_file=\"\""
+auto_append_file=\"\"
+error_log=\"\""
 for port in "$APACHE_PORT" 8081; do
     body=$(curl -sS --max-time 5 -D /tmp/headers "http://127.0.0.1:$port/" 2>&1)
     IFS=$newline
@@ -242,7 +243,7 @@ status=$(curl -sS --max-time 5 "http://127.0.0.1:$APACHE_PORT/server-status" 2>&
 case "$status" in *'Apache Server Status'*) fail "/server-status answers the mod_status page" ;; esac
 pass "Apache serves PHP $PHP_VERSION with display_errors, display_startup_errors off, log_errors,"
 pass "zend.exception_ignore_args, session.use_strict_mode on, session.upload_progress.enabled off, no auto_prepend_file"
-pass "nor auto_append_file, no X-Powered-By, Server: Apache, .htaccess read in public/ alone,"
+pass "nor auto_append_file, an empty error_log, no X-Powered-By, Server: Apache, .htaccess read in public/ alone,"
 pass "/private.txt answering 404, TRACE refused,"
 pass "on port $APACHE_PORT and on a port no vhost claims"
 
@@ -250,7 +251,13 @@ tree=$(LC_ALL=C ls -A /var/www/html | tr '\n' ' ')
 [ "$tree" = '.htaccess private.txt public ' ] || fail "after the probes, /var/www/html holds: $tree"
 tree=$(LC_ALL=C ls -A /var/www/html/public | tr '\n' ' ')
 [ "$tree" = '.htaccess index.php ' ] || fail "after the probes, /var/www/html/public holds: $tree"
-pass "nothing but the probe files in /var/www/html and public/ once the probes are served"
+icons=$(find /usr/share/apache2/icons -mindepth 1 ! -type d | LC_ALL=C sort)
+packaged=$(dpkg -L apache2-data | grep '^/usr/share/apache2/icons/' | while read -r file; do
+    [ -f "$file" ] && [ ! -L "$file" ] && printf '%s\n' "$file"; done | LC_ALL=C sort)
+[ "$icons" = "$packaged" ] || fail "/usr/share/apache2/icons differs from apache2-data; surplus:" \
+    "$(printf '%s\n' "$icons" | grep -vxF "$packaged" | tr '\n' ' ')"
+pass "nothing but the probe files in /var/www/html and public/ once the probes are served,"
+pass "the files of /usr/share/apache2/icons are the ones apache2-data installs"
 
 echo "check-image: PASS"
 INSIDE
