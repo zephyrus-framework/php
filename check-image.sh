@@ -290,6 +290,7 @@ packaged=$(dpkg -L apache2-data | grep '^/usr/share/apache2/icons/' | while read
 [ "$icons" = "$packaged" ] || fail "/usr/share/apache2/icons differs from apache2-data; surplus:" \
     "$(printf '%s\n' "$icons" | grep -vxF "$packaged" | tr '\n' ' ')" \
     "missing: $(printf '%s\n' "$packaged" | grep -vxF "$icons" | tr '\n' ' ')"
+[ -s /var/lib/dpkg/info/apache2-data.md5sums ] || fail "the apache2-data checksum list is missing or empty"
 altered=$(dpkg --verify apache2-data | grep ' /usr/share/apache2/icons/')
 [ -z "$altered" ] || fail "an icon differs from its package checksum: $(printf '%s' "$altered" | tr '\n' ';')"
 pass "nothing but the probe files in /var/www/html and public/ once the probes are served,"
