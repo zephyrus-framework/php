@@ -178,13 +178,17 @@ wanted="$wanted${newline}ErrorLog /var/log/apache2/error.log${newline}ErrorLog /
 [ "$logs" = "$wanted" ] \
     || fail "Apache parses these log directives: $(printf '%s' "$logs" | tr '\n' ';')" \
         "not: $(printf '%s' "$wanted" | tr '\n' ';')"
+for pair in access.log=/dev/stdout other_vhosts_access.log=/dev/stdout error.log=/dev/stderr; do
+    target=$(readlink "/var/log/apache2/${pair%%=*}")
+    [ "$target" = "${pair#*=}" ] || fail "/var/log/apache2/${pair%%=*} points to ${target:-nothing}, not ${pair#*=}"
+done
 vhosts=$(printf '%s\n' "$settings" | sed -n '/^VirtualHost configuration:/,/^ServerRoot:/p' | sed '1d;$d' | tr -s ' ')
 [ "$vhosts" = "*:$APACHE_PORT localhost (/etc/apache2/sites-enabled/default.conf:1)" ] \
     || fail "Apache serves these virtual hosts: $(printf '%s' "$vhosts" | tr '\n' ';')"
 pass "Apache: the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod,"
 pass "ServerSignature Off, TraceEnable Off, /var/www/html and public/ root:root 755; as Apache parses it,"
 pass "one virtual host, DocumentRoot public/, no Alias but /icons/, no Rewrite directive, Listen \$APACHE_PORT alone,"
-pass "the log directives aimed at the image's own log files"
+pass "the log directives aimed at the image's own log files, which are the output streams"
 
 command -v supervisord >/dev/null || fail "supervisord is not installed"
 tables=$(ls -A /etc/supervisor/conf.d)
