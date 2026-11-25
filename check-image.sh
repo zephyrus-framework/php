@@ -182,13 +182,24 @@ for pair in access.log=/dev/stdout other_vhosts_access.log=/dev/stdout error.log
     target=$(readlink "/var/log/apache2/${pair%%=*}")
     [ "$target" = "${pair#*=}" ] || fail "/var/log/apache2/${pair%%=*} points to ${target:-nothing}, not ${pair#*=}"
 done
+formats=$(printf '%s\n' "$dumped" | LC_ALL=C sort | grep -iE '^(LogFormat|ErrorLogFormat|LogLevel)[[:space:]]')
+wanted='LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" combined'
+wanted="$wanted${newline}"'LogFormat "%h %l %u %t \"%r\" %>s %O" common'
+wanted="$wanted${newline}"'LogFormat "%v:%p %h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" vhost_combined'
+wanted="$wanted${newline}"'LogFormat "%{Referer}i -> %U" referer'
+wanted="$wanted${newline}"'LogFormat "%{User-agent}i" agent'
+wanted="$wanted${newline}LogLevel warn"
+[ "$formats" = "$wanted" ] \
+    || fail "Apache parses these log formats and levels: $(printf '%s' "$formats" | tr '\n' ';')" \
+        "not: $(printf '%s' "$wanted" | tr '\n' ';')"
 vhosts=$(printf '%s\n' "$settings" | sed -n '/^VirtualHost configuration:/,/^ServerRoot:/p' | sed '1d;$d' | tr -s ' ')
 [ "$vhosts" = "*:$APACHE_PORT localhost (/etc/apache2/sites-enabled/default.conf:1)" ] \
     || fail "Apache serves these virtual hosts: $(printf '%s' "$vhosts" | tr '\n' ';')"
 pass "Apache: the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod,"
 pass "ServerSignature Off, TraceEnable Off, /var/www/html and public/ root:root 755; as Apache parses it,"
 pass "one virtual host, DocumentRoot public/, no Alias but /icons/, no Rewrite directive, Listen \$APACHE_PORT alone,"
-pass "the log directives aimed at the image's own log files, which are the output streams"
+pass "the log directives aimed at the image's own log files, which are the output streams, with the stock formats"
+pass "and LogLevel warn"
 
 command -v supervisord >/dev/null || fail "supervisord is not installed"
 tables=$(ls -A /etc/supervisor/conf.d)
