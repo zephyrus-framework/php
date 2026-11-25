@@ -180,7 +180,7 @@ wanted="$wanted${newline}ErrorLog /var/log/apache2/error.log${newline}ErrorLog /
         "not: $(printf '%s' "$wanted" | tr '\n' ';')"
 for pair in access.log=/dev/stdout other_vhosts_access.log=/dev/stdout error.log=/dev/stderr; do
     target=$(readlink "/var/log/apache2/${pair%%=*}")
-    [ "$target" = "${pair#*=}" ] || fail "/var/log/apache2/${pair%%=*} points to ${target:-nothing}, not ${pair#*=}"
+    [ "$target" = "${pair#*=}" ] || fail "/var/log/apache2/${pair%%=*} is not a link to ${pair#*=}${target:+, it points to $target}"
 done
 formats=$(printf '%s\n' "$dumped" | LC_ALL=C sort | grep -iE '^(LogFormat|ErrorLogFormat|LogLevel)[[:space:]]')
 wanted='LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" combined'
@@ -264,11 +264,14 @@ tree=$(LC_ALL=C ls -A /var/www/html/public | tr '\n' ' ')
 [ "$tree" = '.htaccess index.php ' ] || fail "after the probes, /var/www/html/public holds: $tree"
 icons=$(find /usr/share/apache2/icons -mindepth 1 ! -type d | LC_ALL=C sort)
 packaged=$(dpkg -L apache2-data | grep '^/usr/share/apache2/icons/' | while read -r file; do
-    [ -f "$file" ] && [ ! -L "$file" ] && printf '%s\n' "$file"; done | LC_ALL=C sort)
+    [ -d "$file" ] && [ ! -L "$file" ] || printf '%s\n' "$file"; done | LC_ALL=C sort)
 [ "$icons" = "$packaged" ] || fail "/usr/share/apache2/icons differs from apache2-data; surplus:" \
-    "$(printf '%s\n' "$icons" | grep -vxF "$packaged" | tr '\n' ' ')"
+    "$(printf '%s\n' "$icons" | grep -vxF "$packaged" | tr '\n' ' ')" \
+    "missing: $(printf '%s\n' "$packaged" | grep -vxF "$icons" | tr '\n' ' ')"
+altered=$(dpkg --verify apache2-data | grep ' /usr/share/apache2/icons/')
+[ -z "$altered" ] || fail "an icon differs from its package checksum: $(printf '%s' "$altered" | tr '\n' ';')"
 pass "nothing but the probe files in /var/www/html and public/ once the probes are served,"
-pass "the files of /usr/share/apache2/icons are the ones apache2-data installs"
+pass "the files of /usr/share/apache2/icons are the ones apache2-data installs, with its checksums"
 
 echo "check-image: PASS"
 INSIDE
