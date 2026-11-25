@@ -100,10 +100,13 @@ compiled=$(find /usr/local/lib/php -name xdebug.so -o -name ssh2.so 2>&1) || fai
 named=$(grep -rli xdebug "$PHP_INI_DIR")
 [ -z "$named" ] || fail "a file of $PHP_INI_DIR names xdebug: $named"
 php -r 'exit(ini_get("apc.enable_cli") ? 0 : 1);' || fail "apc.enable_cli is off"
-cli=$(php -r 'foreach (["error_log", "mail.log", "opcache.error_log"] as $n) { if (ini_get($n) !== "") echo $n, "=", ini_get($n), " "; }')
-[ -z "$cli" ] || fail "the CLI sets log files: $cli"
+cli=$(php -r 'foreach (["error_log", "mail.log", "opcache.error_log"] as $n) {
+    if (ini_get($n) !== "") echo $n, "=", ini_get($n), " ";
+}
+if (ini_get("sendmail_path") !== "/usr/sbin/sendmail -t -i") echo "sendmail_path=", ini_get("sendmail_path");')
+[ -z "$cli" ] || fail "the CLI sets log files or a mail command: $cli"
 pass "php -m is clean, every module is loaded with pcntl, gd has WebP, JPEG and FreeType,"
-pass "no xdebug or ssh2, apc.enable_cli on, no error_log, mail.log or opcache.error_log in the CLI"
+pass "no xdebug or ssh2, apc.enable_cli on, no error_log, mail.log, opcache.error_log or sendmail_path change in the CLI"
 
 [ -n "${PHP_VERSION:-}" ] || fail "PHP_VERSION is not set in the image"
 [ ! -L /var/www/html/public ] || fail "/var/www/html/public is a link to $(readlink /var/www/html/public)"
@@ -120,7 +123,8 @@ foreach (['display_errors', 'display_startup_errors', 'log_errors', 'zend.except
     $flag = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
     echo $name, '=', $flag === null ? var_export($value, true) : ($flag ? 'on' : 'off'), "\n";
 }
-foreach (['auto_prepend_file', 'auto_append_file', 'error_log', 'mail.log', 'opcache.error_log'] as $name) {
+foreach (['auto_prepend_file', 'auto_append_file', 'error_log', 'mail.log', 'opcache.error_log',
+    'sendmail_path'] as $name) {
     echo $name, '=', json_encode(ini_get($name), JSON_UNESCAPED_SLASHES), "\n";
 }
 PHP
@@ -246,7 +250,8 @@ auto_prepend_file=\"\"
 auto_append_file=\"\"
 error_log=\"\"
 mail.log=\"\"
-opcache.error_log=\"\""
+opcache.error_log=\"\"
+sendmail_path=\"/usr/sbin/sendmail -t -i\""
 for port in "$APACHE_PORT" 8081; do
     body=$(curl -sS --max-time 5 -D /tmp/headers "http://127.0.0.1:$port/" 2>&1)
     IFS=$newline
@@ -270,7 +275,8 @@ status=$(curl -sS --max-time 5 "http://127.0.0.1:$APACHE_PORT/server-status" 2>&
 case "$status" in *'Apache Server Status'*) fail "/server-status answers the mod_status page" ;; esac
 pass "Apache serves PHP $PHP_VERSION with display_errors, display_startup_errors off, log_errors,"
 pass "zend.exception_ignore_args, session.use_strict_mode on, session.upload_progress.enabled off, no auto_prepend_file"
-pass "nor auto_append_file, empty error_log, mail.log and opcache.error_log, no X-Powered-By, Server: Apache, .htaccess read in public/ alone,"
+pass "nor auto_append_file, empty error_log, mail.log and opcache.error_log, the stock sendmail_path, no X-Powered-By,"
+pass "Server: Apache, .htaccess read in public/ alone,"
 pass "/private.txt answering 404, TRACE refused,"
 pass "on port $APACHE_PORT and on a port no vhost claims"
 
