@@ -106,7 +106,7 @@ cli=$(php -r 'foreach (["error_log", "mail.log", "opcache.error_log"] as $n) {
 if (ini_get("sendmail_path") !== "/usr/sbin/sendmail -t -i") echo "sendmail_path=", ini_get("sendmail_path");')
 [ -z "$cli" ] || fail "the CLI sets log files or a mail command: $cli"
 pass "php -m is clean, every module is loaded with pcntl, gd has WebP, JPEG and FreeType,"
-pass "no xdebug or ssh2, apc.enable_cli on, no error_log, mail.log, opcache.error_log or sendmail_path change in the CLI"
+pass "no xdebug or ssh2, apc.enable_cli on, no error_log, mail.log, opcache.error_log or sendmail_path set in the CLI"
 
 [ -n "${PHP_VERSION:-}" ] || fail "PHP_VERSION is not set in the image"
 [ ! -L /var/www/html/public ] || fail "/var/www/html/public is a link to $(readlink /var/www/html/public)"
@@ -197,12 +197,14 @@ wanted="$wanted${newline}ErrorLog /var/log/apache2/error.log${newline}ErrorLog /
         "not: $(printf '%s' "$wanted" | tr '\n' ';')"
 for pair in access.log=/dev/stdout other_vhosts_access.log=/dev/stdout error.log=/dev/stderr; do
     target=$(readlink "/var/log/apache2/${pair%%=*}")
-    [ "$target" = "${pair#*=}" ] || fail "/var/log/apache2/${pair%%=*} is not a link to ${pair#*=}${target:+, it points to $target}"
+    [ "$target" = "${pair#*=}" ] \
+        || fail "/var/log/apache2/${pair%%=*} is not a link to ${pair#*=}${target:+, it points to $target}"
 done
 formats=$(printf '%s\n' "$dumped" | LC_ALL=C sort | grep -iE '^(LogFormat|ErrorLogFormat|LogLevel)[[:space:]]')
 wanted='LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" combined'
 wanted="$wanted${newline}"'LogFormat "%h %l %u %t \"%r\" %>s %O" common'
-wanted="$wanted${newline}"'LogFormat "%v:%p %h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" vhost_combined'
+wanted="$wanted${newline}"'LogFormat "%v:%p %h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\""'
+wanted="$wanted vhost_combined"
 wanted="$wanted${newline}"'LogFormat "%{Referer}i -> %U" referer'
 wanted="$wanted${newline}"'LogFormat "%{User-agent}i" agent'
 wanted="$wanted${newline}LogLevel warn"
