@@ -162,6 +162,9 @@ info='LoadModule info_module /usr/lib/apache2/modules/mod_info.so'
 dumped=$(apache2-foreground -t -c "$info" -c 'Define DUMP_CONFIG' 2>&1) \
     || fail "apache2-foreground -t, DUMP_CONFIG: $dumped"
 dumped=$(printf '%s\n' "$dumped" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+odd=$(LC_ALL=C find / -xdev -name '*[[:cntrl:]]*' 2>&1) || fail "find: $odd"
+shown=$(printf '%s\n' "$odd" | head -n 5 | sed -n l | tr '\n' ' ')
+[ -z "$odd" ] || fail "a file name has a control character: $shown"
 includes=$(apache2-foreground -t -D DUMP_INCLUDES 2>&1 | sed -n 's/^ *([^)]*) //p')
 [ -n "$includes" ] || fail "apache2-foreground, DUMP_INCLUDES lists no file"
 IFS=$newline
@@ -215,8 +218,9 @@ vhosts=$(printf '%s\n' "$settings" | sed -n '/^VirtualHost configuration:/,/^Ser
 [ "$vhosts" = "*:$APACHE_PORT localhost (/etc/apache2/sites-enabled/default.conf:1)" ] \
     || fail "Apache serves these virtual hosts: $(printf '%s' "$vhosts" | tr '\n' ';')"
 pass "Apache: the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod,"
-pass "ServerSignature Off, TraceEnable Off, /var/www/html and public/ root:root 755, no IfFile, IfDefine, Define or"
-pass "section name built from a variable in an included file; as Apache parses it, one virtual host,"
+pass "ServerSignature Off, TraceEnable Off, /var/www/html and public/ root:root 755, no file name with a control"
+pass "character, no IfFile, IfDefine, Define or section name built from a variable in an included file;"
+pass "as Apache parses it, one virtual host,"
 pass "DocumentRoot public/, no Alias but /icons/, no Rewrite directive, Listen \$APACHE_PORT alone,"
 pass "the log directives aimed at the image's own log files, which are the output streams, with the stock formats"
 pass "and LogLevel warn"
