@@ -220,10 +220,9 @@ vhosts=$(printf '%s\n' "$settings" | sed -n '/^VirtualHost configuration:/,/^Ser
 pass "Apache: the allowed modules, ssl, status and autoindex files kept, default.conf alone, ServerTokens Prod,"
 pass "ServerSignature Off, TraceEnable Off, /var/www/html and public/ root:root 755, no file name with a control"
 pass "character, no IfFile, IfDefine, Define or section name built from a variable in an included file;"
-pass "as Apache parses it, one virtual host,"
-pass "DocumentRoot public/, no Alias but /icons/, no Rewrite directive, Listen \$APACHE_PORT alone,"
-pass "the log directives aimed at the image's own log files, which are the output streams, with the stock formats"
-pass "and LogLevel warn"
+pass "as Apache parses it, one virtual host, DocumentRoot public/, no Alias but /icons/, no Rewrite directive,"
+pass "Listen \$APACHE_PORT alone, the log directives aimed at the image's own log files, which are the output"
+pass "streams, with the stock formats and LogLevel warn"
 
 command -v supervisord >/dev/null || fail "supervisord is not installed"
 tables=$(ls -A /etc/supervisor/conf.d)
